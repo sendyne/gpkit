@@ -1,5 +1,5 @@
 """Miscellaneous small classes"""
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 import numpy as np
 from . import units as gpkitunits
 
@@ -26,6 +26,8 @@ def matrix_converter(name):
 class CootMatrix(CootMatrixTuple):
     "A very simple sparse matrix representation."
     shape = None
+    length = None
+    map = None
 
     def append(self, row, col, data):
         "Appends entry to matrix."
@@ -33,6 +35,8 @@ class CootMatrix(CootMatrixTuple):
             raise ValueError("Only positive indices allowed")
         if not self.shape:
             self.shape = [row + 1, col + 1]
+            self.length = 0
+            self.map = defaultdict(lambda: defaultdict(int))
         elif row >= self.shape[0]:
             self.shape[0] = row + 1
         elif col >= self.shape[1]:
@@ -40,6 +44,8 @@ class CootMatrix(CootMatrixTuple):
         self.row.append(row)
         self.col.append(col)
         self.data.append(data)
+        self.map[row][col] = self.length
+        self.length += 1
 
     tocoo = matrix_converter("coo")
     tocsc = matrix_converter("csc")

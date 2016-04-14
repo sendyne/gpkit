@@ -1,10 +1,12 @@
 "Scripts for generating, solving and sweeping programs"
 from time import time
 import numpy as np
+from .set import ConstraintSet
 from ..nomials.substitution import parse_subs
 from ..solution_array import SolutionArray
 from ..keydict import KeyDict
 from ..varkey import VarKey
+from ..nomials import Variable
 
 try:
     from ipyparallel import Client
@@ -19,7 +21,8 @@ except (ImportError, IOError, AssertionError):
 
 def _progify_fctry(program, return_attr=None):
     "Generates function that returns a program() and optionally an attribute."
-    def programify(self, verbosity=1, substitutions=None, **kwargs):
+    def programify(self, verbosity=1, substitutions=None, constraints=None,
+                   **kwargs):
         """Return program version of self
 
         Arguments
@@ -31,7 +34,11 @@ def _progify_fctry(program, return_attr=None):
         """
         if not substitutions:
             substitutions = self.substitutions
-        prog = program(self.cost, self, substitutions, verbosity, **kwargs)
+        if constraints:
+            constraints = ConstraintSet([constraints, self])
+        else:
+            constraints = self
+        prog = program(self.cost, constraints, substitutions, verbosity, **kwargs)
         if return_attr:
             return prog, getattr(prog, return_attr)
         else:
@@ -93,6 +100,9 @@ def run_sweep(genfunction, self, solution, skipsweepfailures,
               constants, sweep, linkedsweep,
               solver, verbosity, *args, **kwargs):
     "Runs through a sweep."
+    constraints = [Variable(**key.descr) == 1 for key in sweep]
+    program, solvefn = genfunction(self, verbosity-1, constants, constraints)
+    cs = np.array(program.cs)
     if len(sweep) == 1:
         sweep_grids = np.array(list(sweep.values()))
     else:
@@ -114,8 +124,10 @@ def run_sweep(genfunction, self, solution, skipsweepfailures,
                             for v in var.descr["args"]])
                   for var, fn in linkedsweep.items()}
         this_pass.update(linked)
-        constants.update(this_pass)
-        program, solvefn = genfunction(self, verbosity-1, constants)
+        program.cs = np.array(program.cs)
+        for i, value in enumerate(this_pass.values()):
+            program.cs[1+2*i] = 1.0/value
+            program.cs[2+2*i] = value
         try:
             result = solvefn(solver, verbosity-1, *args, **kwargs)
             # add localmodel here
@@ -138,6 +150,14 @@ def run_sweep(genfunction, self, solution, skipsweepfailures,
 
     solution["sweepvariables"] = KeyDict()
     ksweep, klinkedsweep = KeyDict(sweep), KeyDict(linkedsweep)
+    sweep_idx = {k: i for i, k in enumerate(sweep)}
+    for var, val in solution["freevariables"].items():
+        if var in ksweep or var in klinkedsweep:
+            solution["sweepvariables"][var] = val
+            c_str = str(constraints[sweep_idx[var]])
+            senss = solution["sensitivities"]["constraints"]["\n        " + c_str][c_str]["1"]
+            solution["sensitivities"]["constants"][var] = senss
+            del solution["freevariables"][var]
     for var, val in solution["constants"].items():
         if var in ksweep or var in klinkedsweep:
             solution["sweepvariables"][var] = val
