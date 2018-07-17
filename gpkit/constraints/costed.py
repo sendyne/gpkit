@@ -41,7 +41,10 @@ class CostedConstraintSet(ConstraintSet):
     def constrained_varkeys(self):
         "Return all varkeys in the cost and non-ConstraintSet constraints"
         constrained_varkeys = ConstraintSet.constrained_varkeys(self)
+        #try:
         constrained_varkeys.update(self.cost.varkeys)
+        # except:
+        #     constrained_varkeys.update(self.cost[0].varkeys) # in case of NomialArray objective
         return constrained_varkeys
 
     def reset_varkeys(self):

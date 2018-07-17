@@ -303,6 +303,14 @@ class TestBounded(unittest.TestCase):
         sol = bm.solve(verbosity=0)
         self.assertAlmostEqual(sol["cost"], 1.0)
 
+    def test_nomialarray_issue1339(self):
+        x = VectorVariable(3,"x")
+        y = Variable(1, "y")
+        m = Model(y, [x <= y])
+        mb = Model(m.cost, Bounded(m))
+        self.assertIsInstance(m.cost, Posynomial)
+        self.assertIsInstance(mb.cost, Posynomial)
+
 
 TESTS = [TestConstraint, TestMonomialEquality, TestSignomialInequality,
          TestTight, TestLoose, TestBounded]
