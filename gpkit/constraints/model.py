@@ -195,7 +195,8 @@ class Model(CostedConstraintSet):
 
             relaxvals = sol_constraints(constrsrelaxed.relaxvars)
             if any(rv >= 1.01 for rv in relaxvals):
-                if sol_constraints["boundedness"]:
+                if "boundedness" in sol_constraints and \
+                   sol_constraints["boundedness"]:
                     print("and these constraints relaxed:")
                 else:
                     print("\nSolves with relaxed constraints:")

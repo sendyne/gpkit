@@ -11,7 +11,7 @@ import shutil
 import tempfile
 import errno
 import stat
-from subprocess import check_output
+from subprocess import check_output, call, CalledProcessError
 from .. import settings
 
 
@@ -22,8 +22,81 @@ def error_remove_read_only(func, path, exc):
         os.chmod(path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
         func(path)  # try again
 
+def error_result(status):
+        return dict(status=status,
+                    objective=float('inf'),
+                    primal=[],
+                    nu=[])
 
-def imize_fn(path=None, clearfiles=True):
+def process_log(filename):
+    try:
+        with open(filename,'r') as f:
+            for line in f:
+                args = line.split("Problem status  : ")
+                if len(args) != 2:
+                    continue
+
+                status = args[1][:-1]
+                if status == "PRIMAL_AND_DUAL_FEASIBLE":
+                    status = "optimal"
+                elif status == "DUAL_INFEASIBLE":
+                    status = "dual-infeasible"
+                    return error_result(status)
+
+                elif status == "PRIMAL_INFEASIBLE":
+                    status = "primal-infeasible"
+                    return error_result(status)
+                elif status == "UNKNOWN":
+                    status = "unknown"
+                    return error_result(status)
+                else:
+                    raise Exception("unknown status: %s" % status)
+
+                raise Exception("where is sln file? status=%s" % status)
+    except FileNotFoundError:
+        return None
+
+
+def process_file(filename):
+    try:
+        with open(filename,'r') as f:
+            status = f.readline().split("PROBLEM STATUS      : ")
+            if len(status) != 2:
+                raise RuntimeWarning("could not read mskexpopt output status")
+            status = status[1][:-1]
+            if status == "PRIMAL_AND_DUAL_FEASIBLE":
+                status = "optimal"
+                assert_line(f, "SOLUTION STATUS     : OPTIMAL\n")
+            elif status == "DUAL_INFEASIBLE":
+                status = "dual-infeasible"
+                assert_line(f, "SOLUTION STATUS     : INFEASIBLE\n")
+                return error_result(status)
+
+            elif status == "PRIMAL_INFEASIBLE":
+                status = "primal-infeasible"
+                assert_line(f, "SOLUTION STATUS     : INFEASIBLE\n")
+                return error_result(status)
+            else:
+                raise Exception("unknown status: %s" % status)
+            # line looks like "OBJECTIVE           : 2.763550e+002"
+            objective_val = float(f.readline().split()[2])
+            assert_line(f, "\n")
+            assert_line(f, "PRIMAL VARIABLES\n")
+            assert_line(f, "INDEX   ACTIVITY\n")
+            primal_vals = list(read_vals(f))
+            # read_vals reads the next blank line
+            assert_line(f, "DUAL VARIABLES\n")
+            assert_line(f, "INDEX   ACTIVITY\n")
+            dual_vals = read_vals(f)
+            return dict(status=status,
+                        objective=objective_val,
+                        primal=primal_vals,
+                        nu=dual_vals)
+
+    except FileNotFoundError:
+        return None
+
+def imize_fn(path=None, clearfiles=False):
     """Constructor for the MOSEK CLI solver function.
 
     Arguments
@@ -35,6 +108,9 @@ def imize_fn(path=None, clearfiles=True):
     if not path:
         path = tempfile.mkdtemp()
     filename = path + os.sep + "gpkit_mosek"
+    print(filename)
+    outfilename = filename + ".log"
+    slnfilename = filename+".sol"
     if "mosek_bin_dir" in settings:
         os.environ['PATH'] = ":".join([os.environ['PATH'],
                                        settings["mosek_bin_dir"]])
@@ -83,35 +159,28 @@ def imize_fn(path=None, clearfiles=True):
         write_output_file(filename, c, A, p_idxs)
 
         # run mskexpopt and print stdout
-        for logline in check_output(["mskexpopt", filename]).split(b"\n"):
-            print(logline)
-        with open(filename+".sol") as f:
-            status = f.readline().split("PROBLEM STATUS      : ")
-            if len(status) != 2:
-                raise RuntimeWarning("could not read mskexpopt output status")
-            status = status[1][:-1]
-            if status == "PRIMAL_AND_DUAL_FEASIBLE":
-                status = "optimal"
-            assert_line(f, "SOLUTION STATUS     : OPTIMAL\n")
-            # line looks like "OBJECTIVE           : 2.763550e+002"
-            objective_val = float(f.readline().split()[2])
-            assert_line(f, "\n")
-            assert_line(f, "PRIMAL VARIABLES\n")
-            assert_line(f, "INDEX   ACTIVITY\n")
-            primal_vals = list(read_vals(f))
-            # read_vals reads the next blank line
-            assert_line(f, "DUAL VARIABLES\n")
-            assert_line(f, "INDEX   ACTIVITY\n")
-            dual_vals = read_vals(f)
+        with open(outfilename,'w') as fh:
+            call(["mskexpopt",filename],stdout=fh)
+
+        with open(outfilename,'r') as f:
+            for logline in f:
+                print(logline)
+
+        result = process_file(slnfilename)
+        if result is None:
+            result = process_log(outfilename)
+            if result is None:
+                result = dict(status='unknown',
+                              objective=float('inf'),
+                              primal=[],
+                              nu=[])
+
 
         if clearfiles:
             shutil.rmtree(path, ignore_errors=False,
                           onerror=error_remove_read_only)
 
-        return dict(status=status,
-                    objective=objective_val,
-                    primal=primal_vals,
-                    nu=dual_vals)
+        return result
 
     return imize
 
